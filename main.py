@@ -63,10 +63,6 @@ class MISMOXMLToJSONParser:
         """
         result = {}
         
-        # Add attributes
-        if element.attrib:
-            result['@attributes'] = element.attrib
-        
         # Add text content if present and not empty
         if element.text and element.text.strip():
             if len(element) == 0:  # Leaf node
