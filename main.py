@@ -9,7 +9,8 @@ import json
 import os
 import argparse
 import sys
-from typing import Dict, Any
+import glob
+from typing import Dict, Any, List
 
 
 class MISMOXMLToJSONParser:
@@ -202,6 +203,7 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
+  %(prog)s                                    # Parse all .xml files in current directory
   %(prog)s input.xml                          # Creates input.json
   %(prog)s input.xml -o output.json          # Custom output file
   %(prog)s input.xml --structured            # Also create structured version
@@ -211,7 +213,8 @@ Examples:
     
     parser.add_argument(
         'input',
-        help='Input XML file path'
+        nargs='?',
+        help='Input XML file path (optional: if not provided, all .xml files in current directory will be parsed)'
     )
     
     parser.add_argument(
@@ -235,29 +238,51 @@ Examples:
     return parser.parse_args()
 
 
-def main():
-    """Main function to run the parser"""
-    args = parse_arguments()
+def get_xml_files(input_path: str = None) -> List[str]:
+    """
+    Get list of XML files to process
     
-    # Validate input file
-    if not os.path.exists(args.input):
-        print(f"Error: Input file '{args.input}' not found.", file=sys.stderr)
-        sys.exit(1)
+    Args:
+        input_path: Optional specific input file path
+        
+    Returns:
+        List of XML file paths to process
+    """
+    if input_path:
+        # Validate input file
+        if not os.path.exists(input_path):
+            print(f"Error: Input file '{input_path}' not found.", file=sys.stderr)
+            sys.exit(1)
+        return [input_path]
+    else:
+        # Find all .xml files in current directory
+        xml_files = glob.glob("*.xml")
+        if not xml_files:
+            print("Error: No .xml files found in current directory.", file=sys.stderr)
+            sys.exit(1)
+        return sorted(xml_files)
+
+
+def process_file(parser: MISMOXMLToJSONParser, xml_file: str, args: argparse.Namespace) -> None:
+    """
+    Process a single XML file
     
+    Args:
+        parser: Parser instance
+        xml_file: Path to XML file to process
+        args: Command line arguments
+    """
     # Determine output file path
     if args.output:
         json_file = args.output
     else:
         # Replace .xml extension with .json
-        base_name = os.path.splitext(args.input)[0]
+        base_name = os.path.splitext(xml_file)[0]
         json_file = f"{base_name}.json"
-    
-    # Create parser instance
-    parser = MISMOXMLToJSONParser()
     
     try:
         # Parse XML to JSON
-        parser.parse_xml_to_json(args.input, json_file)
+        parser.parse_xml_to_json(xml_file, json_file)
         
         # Create structured version if requested
         if args.structured:
@@ -278,10 +303,48 @@ def main():
             print(f"Also created structured version: {structured_file}")
         
     except ET.ParseError as e:
-        print(f"Error: Invalid XML file - {e}", file=sys.stderr)
-        sys.exit(2)
+        print(f"Error: Invalid XML file '{xml_file}' - {e}", file=sys.stderr)
+        raise
     except Exception as e:
-        print(f"Error: Conversion failed - {e}", file=sys.stderr)
+        print(f"Error: Conversion failed for '{xml_file}' - {e}", file=sys.stderr)
+        raise
+
+
+def main():
+    """Main function to run the parser"""
+    args = parse_arguments()
+    
+    # Get list of XML files to process
+    xml_files = get_xml_files(args.input)
+    
+    # Create parser instance
+    parser = MISMOXMLToJSONParser()
+    
+    # Process each XML file
+    errors = []
+    for xml_file in xml_files:
+        try:
+            # For multiple files, output paths should be auto-generated (ignore --output and --structured-output)
+            if len(xml_files) > 1:
+                if args.output:
+                    print(f"Warning: --output option ignored when processing multiple files. Using default naming for {xml_file}")
+                if args.structured_output:
+                    print(f"Warning: --structured-output option ignored when processing multiple files. Using default naming for {xml_file}")
+                process_file(parser, xml_file, argparse.Namespace(
+                    output=None,
+                    structured=args.structured,
+                    structured_output=None
+                ))
+            else:
+                process_file(parser, xml_file, args)
+        except Exception as e:
+            errors.append((xml_file, str(e)))
+    
+    # Report any errors
+    if errors:
+        print(f"\nErrors occurred while processing {len(errors)} file(s):", file=sys.stderr)
+        for xml_file, error in errors:
+            print(f"  {xml_file}: {error}", file=sys.stderr)
         sys.exit(1)
 
 
